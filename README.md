@@ -7,7 +7,7 @@
 
 检测书籍 **TXT** 格式的文本编码，修复乱码后**另存为新书**（原书文件零改动）：
 
-1. **编码检测**（BOM 优先 → 候选编码严格解码打分 → chardet 三段采样投票 → mojibake 反转链 → 可读性评分；另含无 BOM UTF-16 车道结构校验、日韩编码脚本一致性识别、西文 latin-1 误读预检、有损兜底恢复与不可逆拒修）
+1. **编码检测**（BOM 优先 → 候选编码严格解码打分 → chardet 三段采样投票 → mojibake 反转链 → 可读性评分；另含无 BOM UTF-16 车道结构校验、日韩编码脚本一致性识别、西文 latin-1 误读预检、有损兜底恢复与不可逆拒修。**chardet 投票仅作参考依据写入检测报告，不参与最终判定**——判定以严格解码打分 + 反转链为准）
 2. **修复**：解码为正确的 UTF-8（无 BOM）写出；带损文件（含少量无法还原的替换符）在检测报告与完成消息中明确警示，损伤超门槛（≥20 处且 >1%）直接拒绝修复
 3. **新书入库**：复用原书完整元数据（作者 / 标签 / 出版社 / 丛书 / 简介 / 语言 / 封面），标题追加「（编码修复版）」
 
@@ -37,7 +37,7 @@ TXT编码修复/
 ├── app/
 │   ├── src/pages/toolbox/txt_encoding_fixer.vue   # Vue 2.6 + Vuetify 2 页面
 │   └── locales/{en,zh,zh-TW}.json     # 修改版：+txtEncodingFixer 块（另含 textReplace 块，见下）
-└── tests/test_encoding_detect.py      # standalone 单测（65 个）
+└── tests/test_encoding_detect.py      # standalone 单测（70 个）
 ```
 
 ## 安装部署（4 处修改）
@@ -60,20 +60,18 @@ TXT编码修复/
 `toolset.py` 与 `handlers/toolbox.py` **已同时包含两个插件的注册与路由**
 （6 handler + 6 路由），locales 亦同时含 `txtEncodingFixer` + `textReplace` 两块：
 
-- 只装本插件：直接按上表复制即可（多余的另一插件注册行无害——对应
-  `text_replace.py` 不存在时导入会报错，见下方说明）；
+- 只装本插件：直接按上表复制即可——对 `TextReplaceTool` 的 import 均已做
+  `try/except ImportError` 兜底，未安装「正文查找替换」时自动跳过其注册，
+  其余功能不受影响（其 3 条路由被实际调用才会报错）；
 - 同时装两个：将 `正文查找替换` 文件夹中的 `text_replace.py` 一并复制即可，
   **两个文件夹的修改版文件内容一致，任取其一**，无需手工合并。
 
-> 注意：本文件夹 `toolset.py` / `handlers/toolbox.py` 会 import
-> `TextReplaceTool`。若**只装本插件**，请删除修改版中的这两处引用
-> （`toolset.py` 的 import + register 各 1 行；`toolbox.py` 的 import 1 行 +
-> `AdminTextReplace*` 3 个 handler + 3 条路由），或直接改用
-> `正文查找替换` 文件夹中同名的修改版（内容一致，反向删 `TxtEncodingFixerTool` 引用）。
-
 ### 依赖
 
-- `chardet`（`requirements.txt` 已包含，v7.x）：编码检测投票，缺失时自动退化为纯规则检测。
+- Python ≥ 3.10（宿主 `toolset.py` 使用 PEP 604 联合类型语法）
+- `chardet`（`requirements.txt` 已包含，v7.x）：编码检测采样投票，缺失时自动退化为纯规则检测（投票结果仅作参考依据，不参与最终判定）
+
+> 报告中的 `reasons`（检测依据）等算法层字段为简体中文：算法层刻意保持零宿主依赖（不接 i18n）；界面文案（按钮 / 提示 / 完成消息）已做三语。
 
 ## 运行测试
 
