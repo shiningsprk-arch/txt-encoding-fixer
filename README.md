@@ -7,7 +7,7 @@
 
 检测书籍 **TXT** 格式的文本编码，修复乱码后**另存为新书**（原书文件零改动）：
 
-1. **编码检测**（BOM 优先 → 候选编码严格解码打分 → chardet 三段采样投票 → mojibake 反转链 → 可读性评分）
+1. **编码检测**（BOM 优先 → 候选编码严格解码打分 → chardet 三段采样投票 → mojibake 反转链 → 可读性评分；另含无 BOM UTF-16 车道结构校验、日韩编码脚本一致性识别、西文 latin-1 误读预检、有损兜底恢复与不可逆拒修）
 2. **修复**：解码为正确的 UTF-8（无 BOM）写出
 3. **新书入库**：复用原书完整元数据（作者 / 标签 / 出版社 / 丛书 / 简介 / 语言 / 封面），标题追加「（编码修复版）」
 
@@ -31,23 +31,24 @@ TXT编码修复/
 │   └── toolbox/
 │       ├── toolset.py                 # 修改版：+2 import +2 register（含 text_replace，见下）
 │       ├── txt_encoding_fixer.py      # 插件主体（Tool 类）
-│       ├── encoding_detect.py         # 公共模块①：编码检测（与 text_replace 共享）
-│       └── book_utils.py              # 公共模块②：get_book_file / import_as_new_book
+│       └── utils/
+│           ├── encoding_detect.py     # 公共模块①：编码检测（与 text_replace 共享）
+│           └── book_utils.py          # 公共模块②：get_book_file / import_as_new_book
 ├── app/
 │   ├── src/pages/toolbox/txt_encoding_fixer.vue   # Vue 2.6 + Vuetify 2 页面
 │   └── locales/{en,zh,zh-TW}.json     # 修改版：+txtEncodingFixer 块（另含 textReplace 块，见下）
-└── tests/test_encoding_detect.py      # standalone 单测（12 个）
+└── tests/test_encoding_detect.py      # standalone 单测（53 个）
 ```
 
 ## 安装部署（4 处修改）
 
-将以下文件复制到 mybooks 源码对应位置：
+将以下文件复制到 mybooks 源码对应位置（与主线 v4.4.1 布局一致）：
 
 | 源文件 | 目标位置 |
 |--------|----------|
 | `webserver/toolbox/txt_encoding_fixer.py` | `webserver/toolbox/` |
-| `webserver/toolbox/encoding_detect.py` | `webserver/toolbox/` |
-| `webserver/toolbox/book_utils.py` | `webserver/toolbox/` |
+| `webserver/toolbox/utils/encoding_detect.py` | `webserver/toolbox/utils/` |
+| `webserver/toolbox/utils/book_utils.py` | `webserver/toolbox/utils/` |
 | `webserver/toolbox/toolset.py` | **覆盖** `webserver/toolbox/toolset.py` |
 | `webserver/handlers/toolbox.py` | **覆盖** `webserver/handlers/toolbox.py` |
 | `app/src/pages/toolbox/txt_encoding_fixer.vue` | `app/src/pages/toolbox/` |
@@ -81,9 +82,9 @@ python -m unittest discover -s tests -v
 # 或：python tests/test_encoding_detect.py
 ```
 
-覆盖：UTF-8 / GB18030 / BIG5 / UTF-8 BOM / 英文 / 二进制垃圾 / 空文件 /
-GB18030 与 BIG5 解码往返 / BOM 剥离 / 乱码反转恢复（BIG5-as-GBK-UTF8 场景）/
-str 输入防御。
+覆盖：UTF-8 / GB18030 / BIG5 / UTF-16 无 BOM / 各类 BOM 及 BOM 错配 / 英文 / 二进制垃圾 /
+空文件 / 解码往返 / 乱码反转恢复（BIG5-as-GBK、UTF8-as-GBK、ANSI 单双层、西文误读）/
+幂等性 / 采样边界 / 有损兜底 / 不可逆拒修 / str 输入防御。
 
 ## 测试库实测步骤
 

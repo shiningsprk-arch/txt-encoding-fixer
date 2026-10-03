@@ -22,10 +22,11 @@ from webserver.services import AsyncService
 from webserver.services.background_service import BackgroundService, BackgroundTask
 from webserver.toolbox.base_tool import BaseTool
 
-from . import book_utils
-from . import encoding_detect
+from webserver.toolbox.utils import book_utils
+from webserver.toolbox.utils import encoding_detect
 
 PREVIEW_CHARS = 500  # analyze 报告中的修复预览长度
+ANALYZE_LIMIT = 2 * 1024 * 1024  # analyze 检测读取上限（编码检测取前缀即可，防大文件阻塞请求线程）
 
 
 class TxtEncodingFixerTool(BaseTool):
@@ -58,6 +59,7 @@ class TxtEncodingFixerTool(BaseTool):
             "publish_date": "2026-08-09",
         }
 
+    @AsyncService.register_function
     def analyze(self, book_id: int) -> dict:
         """同步检测书籍 TXT 文件的编码，返回报告 + 修复后预览。
 
@@ -69,7 +71,7 @@ class TxtEncodingFixerTool(BaseTool):
         """
         txt_path = book_utils.get_book_file(self, book_id, "TXT")
         with open(txt_path, "rb") as f:
-            data = f.read()
+            data = f.read(ANALYZE_LIMIT)
 
         text, report = encoding_detect.decode_with_report(data)
         report["preview"] = text[:PREVIEW_CHARS]
@@ -90,16 +92,21 @@ class TxtEncodingFixerTool(BaseTool):
             )
             return
 
-        task_id = self.create_task(progress_data={"status": "starting", "book_id": book_id})
-        TxtEncodingFixerTool._last_task_id = task_id
-        progress_callback = self.make_progress_callback(task_id)
+        # create_task 等全部放入 try：若中途抛异常，finally 仍会释放锁，
+        # 避免锁永久泄漏导致工具不可用（需重启服务才能恢复）
+        task_id = None
         error_message = None
         book_title = "Unknown"
 
         try:
-            books = self.db.get_data_as_dict(ids=[book_id])
+            task_id = self.create_task(progress_data={"status": "starting", "book_id": book_id})
+            TxtEncodingFixerTool._last_task_id = task_id
+            progress_callback = self.make_progress_callback(task_id)
+
+            books = self.api.calibre.get_data_as_dict([book_id])
             if not books:
                 error_message = _("书籍不存在：ID=%d") % book_id
+                self.update_task_progress(task_id, 0, {"status": "failed", "stage": "failed"})
                 logging.error("[TxtEncodingFixerTool] Book not found: ID=%d [uid:%d]", book_id, user_id)
                 return
 
@@ -108,12 +115,14 @@ class TxtEncodingFixerTool(BaseTool):
             fmts = [f.upper() for f in (book.get("available_formats") or [])]
             if "TXT" not in fmts:
                 error_message = _("该书籍没有 TXT 格式，无法执行修复")
+                self.update_task_progress(task_id, 0, {"status": "failed", "stage": "failed"})
                 logging.error("[TxtEncodingFixerTool] No TXT format for book_id=%d [uid:%d]", book_id, user_id)
                 return
 
-            txt_path = self.db.format_abspath(book_id, "TXT", index_is_id=True)
+            txt_path = self.api.calibre.format_abspath(book_id, "TXT")
             if not txt_path or not os.path.exists(txt_path):
                 error_message = _("找不到 TXT 文件，可能已被移除")
+                self.update_task_progress(task_id, 0, {"status": "failed", "stage": "failed"})
                 logging.error("[TxtEncodingFixerTool] TXT file missing for book_id=%d [uid:%d]", book_id, user_id)
                 return
 
@@ -127,8 +136,19 @@ class TxtEncodingFixerTool(BaseTool):
             progress_callback(40)
 
             text, report = encoding_detect.decode_with_report(data)
+            if report.get("irreversible"):
+                error_message = _("乱码链路不可逆（字节级信息已毁），无法自动修复")
+                self.update_task_progress(task_id, 0, {"status": "failed", "stage": "failed"})
+                logging.error("[TxtEncodingFixerTool] Irreversible encoding chain for book_id=%d", book_id)
+                return
+            if report["unrecoverable"]:
+                error_message = _("文件疑似多重误读乱码（反转循环），无法自动修复")
+                self.update_task_progress(task_id, 0, {"status": "failed", "stage": "failed"})
+                logging.error("[TxtEncodingFixerTool] Unrecoverable mojibake cycle for book_id=%d", book_id)
+                return
             if report["garbage"] and not report["mojibake"]:
                 error_message = _("文件疑似二进制或混用编码，无法安全修复（编码：%s）") % report["encoding"]
+                self.update_task_progress(task_id, 0, {"status": "failed", "stage": "failed"})
                 logging.error("[TxtEncodingFixerTool] Garbage content for book_id=%d: %s", book_id, report["encoding"])
                 return
 
@@ -160,7 +180,9 @@ class TxtEncodingFixerTool(BaseTool):
             logging.error("[TxtEncodingFixerTool] Unexpected error for book_id=%d: %s", book_id, err)
             logging.error(traceback.format_exc())
         finally:
-            self.complete_task(task_id, error_message=error_message)
-            if error_message is None:
-                self.update_task_progress(task_id, 100, {"status": "completed", "book_id": book_id})
+            # create_task 失败时 task_id 为 None，跳过任务收尾（锁仍必须释放）
+            if task_id is not None:
+                self.complete_task(task_id, error_message=error_message)
+                if error_message is None:
+                    self.update_task_progress(task_id, 100, {"status": "completed", "book_id": book_id})
             TxtEncodingFixerTool._fix_lock.release()

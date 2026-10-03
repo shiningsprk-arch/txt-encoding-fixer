@@ -105,7 +105,7 @@
                 <v-card-text class="pt-0">
                   <div class="d-flex flex-wrap mb-2">
                     <v-chip small outlined class="mr-2 mb-1">
-                      <v-icon small left>mdi-text-encoding</v-icon>{{ report.encoding }}
+                      <v-icon small left>mdi-file-code-outline</v-icon>{{ report.encoding }}
                     </v-chip>
                     <v-chip small outlined class="mr-2 mb-1">
                       <v-icon small left>mdi-percent-outline</v-icon>{{ $t('txtEncodingFixer.confidence') }}：{{ Math.round(report.confidence * 100) }}%
@@ -225,7 +225,15 @@ export default {
     this.stopPolling();
   },
   methods: {
+    searchDebounce: null,
     async search() {
+      // 防抖：连按回车/快速输入时只发最后一个请求
+      clearTimeout(this.searchDebounce);
+      this.searchDebounce = setTimeout(() => {
+        this.doSearch();
+      }, 300);
+    },
+    async doSearch() {
       const q = (this.query || '').trim();
       if (!q) return;
       this.searching = true;

@@ -18,27 +18,35 @@ from calibre.ebooks.metadata.book.base import Metadata
 
 from webserver import utils
 from webserver.i18n import _
-from webserver.models import Item
 
 
 def get_book_file(tool, book_id: int, fmt: str) -> str:
     """校验书籍存在且具备指定格式，返回该格式文件的绝对路径。
 
-    :param tool:    调用方 Tool 实例（提供 ``db`` / ``get_book_metadata`` 等）。
+    :param tool:    调用方 Tool 实例（提供 ``api`` / ``get_book_metadata`` 等）。
     :param book_id: Calibre 书籍 ID。
     :param fmt:     大写格式名，如 ``"TXT"`` / ``"EPUB"``。
     :return: 文件绝对路径。
-    :raises RuntimeError: 书籍不存在 / 无该格式 / 文件缺失。
+    :raises RuntimeError: 书籍不存在 / 无该格式 / 文件缺失 / 路径不是文件 / 无法读取。
     """
-    books = tool.db.get_data_as_dict(ids=[book_id])
+    books = tool.api.calibre.get_data_as_dict([book_id])
     if not books:
         raise RuntimeError(_("书籍不存在：ID=%d") % book_id)
     fmts = [f.upper() for f in (books[0].get("available_formats") or [])]
     if fmt not in fmts:
         raise RuntimeError(_("该书籍没有 %s 格式，无法处理") % fmt)
-    path = tool.db.format_abspath(book_id, fmt, index_is_id=True)
+    path = tool.api.calibre.format_abspath(book_id, fmt)
     if not path or not os.path.exists(path):
         raise RuntimeError(_("找不到 %s 文件，可能已被移除") % fmt)
+    if not os.path.isfile(path):
+        # 目录 / 特殊设备等非普通文件：给出明确提示而非 IsADirectoryError 堆栈
+        raise RuntimeError(_("%s 文件路径异常（不是普通文件），可能已被破坏") % fmt)
+    try:
+        # 提前验证可读性（权限 / 独占锁定 / 已删除句柄等），转成友好错误
+        with open(path, "rb") as f:
+            f.read(1)
+    except (PermissionError, OSError) as err:
+        raise RuntimeError(_("无法读取 %s 文件：%s") % (fmt, err)) from err
     return path
 
 
@@ -69,7 +77,7 @@ def import_as_new_book(
     authors = list(src_mi.authors) if src_mi.authors else []
 
     cover_data = None
-    raw_cover = tool.db.cover(book_id, index_is_id=True)
+    raw_cover = tool.api.calibre.cover(book_id)
     if raw_cover:
         cover_data = ("jpeg", raw_cover)
 
@@ -92,15 +100,12 @@ def import_as_new_book(
         "[%s] Importing as new book: book_id=%d -> %s",
         tool.__class__.__name__, book_id, title,
     )
-    new_book_id = tool.db.import_book(mi, [out_path])
+    new_book_id = tool.api.calibre.import_book(mi, [out_path])
     if new_book_id is None:
         raise RuntimeError(_("导入新书失败：%s") % title)
 
     try:
-        item = Item()
-        item.book_id = new_book_id
-        item.collector_id = user_id
-        item.save()
+        tool.api.db.create_item(new_book_id, user_id)
     except Exception as err:
         logging.error(
             "[%s] Failed to create Item for book_id=%s: %s",
