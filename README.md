@@ -1,6 +1,6 @@
 # TXT编码修复（MyBooks Toolbox 插件）
 
-> 工具 ID：`txt_encoding_fixer`　作者：黏菌　版本：0.1.0
+> 工具 ID：`txt_encoding_fixer`　作者：黏菌　版本：0.1.1
 > 书库 → 工具箱 → TXT编码修复 → 选择书籍 → 分析编码 → 执行修复
 
 ## 功能
@@ -8,7 +8,7 @@
 检测书籍 **TXT** 格式的文本编码，修复乱码后**另存为新书**（原书文件零改动）：
 
 1. **编码检测**（BOM 优先 → 候选编码严格解码打分 → chardet 三段采样投票 → mojibake 反转链 → 可读性评分；另含无 BOM UTF-16 车道结构校验、日韩编码脚本一致性识别、西文 latin-1 误读预检、有损兜底恢复与不可逆拒修）
-2. **修复**：解码为正确的 UTF-8（无 BOM）写出
+2. **修复**：解码为正确的 UTF-8（无 BOM）写出；带损文件（含少量无法还原的替换符）在检测报告与完成消息中明确警示，损伤超门槛（≥20 处且 >1%）直接拒绝修复
 3. **新书入库**：复用原书完整元数据（作者 / 标签 / 出版社 / 丛书 / 简介 / 语言 / 封面），标题追加「（编码修复版）」
 
 典型场景：繁体 BIG5 小说被程序按 GBK 误读后以 UTF-8 存盘（表现为「锟斤拷」乱码）——检测器能自动反转恢复。
@@ -37,7 +37,7 @@ TXT编码修复/
 ├── app/
 │   ├── src/pages/toolbox/txt_encoding_fixer.vue   # Vue 2.6 + Vuetify 2 页面
 │   └── locales/{en,zh,zh-TW}.json     # 修改版：+txtEncodingFixer 块（另含 textReplace 块，见下）
-└── tests/test_encoding_detect.py      # standalone 单测（53 个）
+└── tests/test_encoding_detect.py      # standalone 单测（65 个）
 ```
 
 ## 安装部署（4 处修改）
